@@ -1,0 +1,14 @@
+# CPRG-312 Developer Portfolio Project: Phase 1 by Tom Khrustalev (000962008)
+
+------------------------
+
+Reflection Checkpoints:
+
+    Part B - Configure SSL Certificates: 
+        I chose to use self-signed certificate because I learned that it is easier to use if you are developing locally. As i did not have any past experience working with SSL it was an opportunity to try this method. generating the self-signed certs was fairly simple with a command i found online which I put in the terminal and it generated the cert.ped and key.pem files in the /certs folder. only thing my browser was giving me a warning message but i was able to get past it by accepting the connection. 
+
+    Part C - Implement Secure HTTP Headers:
+        I used the helmet middleware in my index.js, which presets headers like CSP, X-Frame-Option, X-Content-Type-Options and others. I am not quite sure if I was expected to manually set any extra headers as in my understanding Helmet already sets the necessary ones and protects the site from possible attacks and vulnerabilities. 
+
+    Part D - Design Routes and Implement Cache Control:
+        I implemented GET, POST, PUT, and DELETE routes with caching for GET routes max-age of 5 minutes to make the app faster by reducing database queries. Also posts can be set to private which will hide them from users with a "guest" role so no sensetive posts will be seen. The tradeoff is that changes made to posts may not show up for 5 minutes. Also, i found that when testing on the browser, i cannot query private posts. but i use Postman in VS Code to set the role header to "admin" or "dev" to see if the role-based visiblity is working correctly.
