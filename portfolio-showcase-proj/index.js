@@ -6,44 +6,259 @@ const helmet = require('helmet');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const mongoose = require('mongoose');
+const session = require('express-session');
+const passport = require('passport');
+const GoogleStrategy = require('passport-google-oauth20').Strategy;
+const argon2 = require('argon2');
 const Post = require('./models/Post');
+const User = require('./models/User');
+const jwt = require('jsonwebtoken');
+const cookieParser = require('cookie-parser');
+const csrf = require('csurf');
+const rateLimit = require('express-rate-limit');
 
 const app = express();
 
 app.use(bodyParser.json());
-app.use(cors());
+app.use(cors({ origin: process.env.CORS_ORIGIN, credentials: true }));
 app.use(helmet());
+app.use(cookieParser());
+app.disable('x-powered-by');
 
-mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log('Connected to MongoDB'))
-  .catch((err) => console.error('MongoDB connection error:', err));
+mongoose.connect(process.env.MONGO_URI).then(() => console.log('Connected to MongoDB')).catch((err) => console.error('MongoDB connection error:', err));
+
+app.use(session({
+  secret: process.env.SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  name: 'sid',
+  cookie: { httpOnly: true, sameSite: 'lax', secure: true, maxAge: 1000 * 60 * 60 }
+}));
+
+app.use(passport.initialize());
+app.use(passport.session());
+
+passport.serializeUser((user, done) => done(null, user.id));
+passport.deserializeUser(async (id, done) => {
+  try {
+    const u = await User.findById(id);
+    done(null, u);
+  } catch (e) {
+    done(e);
+  }
+});
+
+passport.use(new GoogleStrategy(
+  {
+    clientID: process.env.GOOGLE_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    callbackURL: process.env.GOOGLE_CALLBACK_URL
+  },
+  async (accessToken, refreshToken, profile, done) => {
+    try {
+      const username = `google_${profile.id}`;
+      let user = await User.findOne({ username });
+      if (!user) {
+        user = await User.create({
+          username,
+          name: profile.displayName || 'Google User',
+          password: await argon2.hash(profile.id),
+          role: 'user',
+          provider: 'google'
+        });
+      }
+      return done(null, user);
+    } catch (e) {
+      return done(e);
+    }
+  }
+));
+
+function signAccessToken(user) {
+  return jwt.sign({ sub: user.id, role: user.role, username: user.username }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES || '15m' });
+}
+
+function signRefreshToken(user) {
+  return jwt.sign({ sub: user.id }, process.env.REFRESH_SECRET, { expiresIn: process.env.REFRESH_EXPIRES || '7d' });
+}
+
+function getCookie(req, name) {
+  const h = req.headers.cookie;
+  if (!h) return null;
+  const p = h.split(';').map(s => s.trim()).find(s => s.startsWith(name + '='));
+  if (!p) return null;
+  return decodeURIComponent(p.split('=')[1]);
+}
+
+function attachUser(req, res, next) {
+  const t = getCookie(req, 'access_token');
+  if (!t) return next();
+  try {
+    const payload = jwt.verify(t, process.env.JWT_SECRET);
+    req.user = { id: payload.sub, role: payload.role, username: payload.username };
+  } catch (e) {}
+  next();
+}
+
+function requireAuth(req, res, next) {
+  if (req.user) return next();
+  res.status(401).json({ error: 'Not authenticated' });
+}
 
 function requireRole(roles) {
   return (req, res, next) => {
-    const userRole = req.headers['role'] || 'guest';
-    if (roles.includes(userRole)) {
-      next();
-    } else {
-      res.status(403).json({ error: 'Access denied' });
-    }
+    const role = req.user?.role || 'guest';
+    if (roles.includes(role)) next();
+    else res.status(403).json({ error: 'Access denied' });
   };
+}
+
+app.use(attachUser);
+
+
+function requireRole(roles) {
+  return (req, res, next) => {
+    const role = req.user?.role || 'guest';
+    if (roles.includes(role)) next();
+    else res.status(403).json({ error: 'Access denied' });
+  };
+}
+
+function requireAuth(req, res, next) {
+  if (req.user) return next();
+  res.status(401).json({ error: 'Not authenticated' });
 }
 
 app.get('/', (req, res) => {
   res.send('Hello! Your HTTPS server with Helmet is running securely.');
 });
 
+const loginLimiter = rateLimit({
+  windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS) || 900000,
+  max: Number(process.env.RATE_LIMIT_MAX) || 5,
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+const csrfProtection = csrf({ cookie: { httpOnly: true, secure: true, sameSite: 'lax' } });
+
+app.get('/csrf', csrfProtection, (req, res) => {
+  res.json({ csrfToken: req.csrfToken() });
+});
+
+app.post('/auth/reset', csrfProtection, async (req, res) => {
+  try {
+    const { username, newPassword } = req.body;
+    if (!username || !newPassword) return res.status(400).json({ error: 'username and newPassword are required' });
+    const user = await User.findOne({ username, provider: 'local' });
+    if (!user) return res.status(404).json({ error: 'user not found' });
+    user.password = await argon2.hash(newPassword);
+    await user.save();
+    res.json({ message: 'password updated' });
+  } catch {
+    res.status(500).json({ error: 'reset failed' });
+  }
+});
+
+app.post('/auth/signup', csrfProtection, async (req, res) => {
+  try {
+    const { username, password, name } = req.body;
+    if (!username || !password) return res.status(400).json({ error: 'username and password are required' });
+    const exists = await User.findOne({ username });
+    if (exists) return res.status(409).json({ error: 'username already exists' });
+    const hash = await argon2.hash(password);
+    const user = await User.create({ username, password: hash, name, role: 'user', provider: 'local' });
+    req.session.regenerate(() => {});
+    const at = signAccessToken(user);
+    const rt = signRefreshToken(user);
+    res.cookie('access_token', at, { httpOnly: true, secure: true, sameSite: 'lax', maxAge: 15 * 60 * 1000 });
+    res.cookie('refresh_token', rt, { httpOnly: true, secure: true, sameSite: 'lax', maxAge: 7 * 24 * 60 * 60 * 1000 });
+    res.json({ id: user.id, username: user.username, role: user.role, name: user.name });
+  } catch {
+    res.status(500).json({ error: 'signup failed' });
+  }
+});
+
+app.post('/auth/login', loginLimiter, csrfProtection, async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) return res.status(400).json({ error: 'username and password are required' });
+    const user = await User.findOne({ username });
+    if (!user) return res.status(401).json({ error: 'invalid credentials' });
+    const ok = await argon2.verify(user.password, password);
+    if (!ok) return res.status(401).json({ error: 'invalid credentials' });
+    req.session.regenerate(() => {});
+    const at = signAccessToken(user);
+    const rt = signRefreshToken(user);
+    res.cookie('access_token', at, { httpOnly: true, secure: true, sameSite: 'lax', maxAge: 15 * 60 * 1000 });
+    res.cookie('refresh_token', rt, { httpOnly: true, secure: true, sameSite: 'lax', maxAge: 7 * 24 * 60 * 60 * 1000 });
+    res.json({ id: user.id, username: user.username, role: user.role, name: user.name });
+  } catch {
+    res.status(500).json({ error: 'login failed' });
+  }
+});
+
+app.post('/auth/logout', csrfProtection, (req, res) => {
+  res.clearCookie('access_token', { path: '/' });
+  res.clearCookie('refresh_token', { path: '/' });
+  res.json({ message: 'logged out' });
+});
+
+app.post('/auth/refresh', csrfProtection, async (req, res) => {
+  try {
+    const rt = getCookie(req, 'refresh_token');
+    if (!rt) return res.status(401).json({ error: 'no refresh token' });
+    const payload = jwt.verify(rt, process.env.REFRESH_SECRET);
+    const user = await User.findById(payload.sub);
+    if (!user) return res.status(401).json({ error: 'invalid refresh token' });
+    const at = signAccessToken(user);
+    const newRt = signRefreshToken(user);
+    res.cookie('access_token', at, { httpOnly: true, secure: true, sameSite: 'lax', maxAge: 15 * 60 * 1000 });
+    res.cookie('refresh_token', newRt, { httpOnly: true, secure: true, sameSite: 'lax', maxAge: 7 * 24 * 60 * 60 * 1000 });
+    res.json({ message: 'refreshed' });
+  } catch {
+    res.status(401).json({ error: 'refresh failed' });
+  }
+});
+
+app.get('/auth/google', passport.authenticate('google', { scope: ['profile'] }));
+app.get('/auth/google/callback', passport.authenticate('google', { failureRedirect: '/auth/fail' }), (req, res) => {
+  res.redirect('/auth/success');
+});
+app.get('/auth/success', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+  res.json({ id: req.user.id, username: req.user.username, role: req.user.role, name: req.user.name });
+});
+app.get('/auth/fail', (req, res) => res.status(401).json({ error: 'Google auth failed' }));
+
+app.get('/me', requireAuth, (req, res) => {
+  res.json({ id: req.user.id, username: req.user.username, role: req.user.role, name: req.user.name });
+});
+
+app.get('/admin', requireRole(['admin']), (req, res) => {
+  res.json({ area: 'admin', user: { id: req.user.id, username: req.user.username, role: req.user.role } });
+});
+
+app.get('/profile', requireAuth, (req, res) => {
+  res.json({ area: 'profile', user: { id: req.user.id, username: req.user.username, role: req.user.role, name: req.user.name } });
+});
+
+app.get('/dashboard', requireAuth, (req, res) => {
+  const role = req.user.role || 'guest';
+  if (role === 'admin') return res.json({ area: 'dashboard', features: ['manage_users','manage_posts'] });
+  if (role === 'user') return res.json({ area: 'dashboard', features: ['create_posts','edit_own_posts','view_public'] });
+  return res.json({ area: 'dashboard', features: ['view_public'] });
+});
+
 app.get('/posts', async (req, res) => {
   try {
-    const userRole = req.headers['role'] || 'guest';
+    const role = req.user?.role || 'guest';
     let query = {};
-    if (userRole === 'guest') {
-      query.public = true;
-    }
+    if (role === 'guest') query.public = true;
     const posts = await Post.find(query, '-content');
     res.set('Cache-Control', 'public, max-age=300, stale-while-revalidate=30');
     res.json(posts);
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: 'Error fetching posts' });
   }
 });
@@ -52,57 +267,50 @@ app.get('/posts/:id', async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
     if (!post) return res.status(404).json({ error: 'Post not found' });
-
-    const userRole = req.headers['role'] || 'guest';
-    if (!post.public && !['admin','dev'].includes(userRole)) {
-      return res.status(403).json({ error: 'Access denied' });
-    }
-
+    const role = req.user?.role || 'guest';
+    if (!post.public && !['admin','user'].includes(role)) return res.status(403).json({ error: 'Access denied' });
     res.set('Cache-Control', 'public, max-age=300');
     res.json(post);
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: 'Error fetching post' });
   }
 });
 
-
-app.post('/posts', requireRole(['admin','dev']), async (req, res) => {
-  const { title, content, author, public } = req.body;
-  if (!title || !content || !author) {
-    return res.status(400).json({ error: 'title, content and author are required' });
-  }
+app.post('/posts', csrfProtection, requireRole(['admin','user']), async (req, res) => {
+  const { title, content, author, public: isPublic } = req.body;
+  if (!title || !content || !author) return res.status(400).json({ error: 'title, content and author are required' });
   try {
-    const newPost = new Post({ title, content, author, public });
+    const newPost = new Post({ title, content, author, public: isPublic });
     await newPost.save();
     res.status(201).json(newPost);
-  } catch (err) {
+  } catch {
     res.status(400).json({ error: 'Error creating post' });
   }
 });
 
-app.put('/posts/:id', requireRole(['admin','dev']), async (req, res) => {
+app.put('/posts/:id', csrfProtection, requireRole(['admin','user']), async (req, res) => {
   try {
     const updatedPost = await Post.findByIdAndUpdate(req.params.id, req.body, { new: true });
     if (!updatedPost) return res.status(404).json({ error: 'Post not found' });
     res.json(updatedPost);
-  } catch (err) {
+  } catch {
     res.status(400).json({ error: 'Error updating post' });
   }
 });
 
-app.delete('/posts/:id', requireRole(['admin','dev']), async (req, res) => {
+app.delete('/posts/:id', csrfProtection, requireRole(['admin','user']), async (req, res) => {
   try {
     const deletedPost = await Post.findByIdAndDelete(req.params.id);
     if (!deletedPost) return res.status(404).json({ error: 'Post not found' });
     res.json({ message: 'Post deleted' });
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: 'Error deleting post' });
   }
 });
 
 const httpsOptions = {
   key: fs.readFileSync('./certs/key.pem'),
-  cert: fs.readFileSync('./certs/cert.pem'),
+  cert: fs.readFileSync('./certs/cert.pem')
 };
 
 const PORT = process.env.PORT || 3443;

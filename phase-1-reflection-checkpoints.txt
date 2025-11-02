@@ -2,7 +2,7 @@
 
 ------------------------
 
-Reflection Checkpoints:
+Phase 1 Reflection Checkpoints:
 
     Part B - Configure SSL Certificates: 
         I chose to use self-signed certificate because I learned that it is easier to use if you are developing locally. As i did not have any past experience working with SSL it was an opportunity to try this method. generating the self-signed certs was fairly simple with a command i found online which I put in the terminal and it generated the cert.ped and key.pem files in the /certs folder. only thing my browser was giving me a warning message but i was able to get past it by accepting the connection. 
