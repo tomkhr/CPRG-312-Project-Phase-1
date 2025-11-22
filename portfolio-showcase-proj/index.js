@@ -16,8 +16,13 @@ const jwt = require('jsonwebtoken');
 const cookieParser = require('cookie-parser');
 const csrf = require('csurf');
 const rateLimit = require('express-rate-limit');
+const path = require('path');
+const crypto = require('crypto');
+
 
 const app = express();
+
+app.use(express.static(path.join(__dirname, 'public')));
 
 app.use(bodyParser.json());
 app.use(cors({ origin: process.env.CORS_ORIGIN, credentials: true }));
@@ -129,6 +134,29 @@ function requireAuth(req, res, next) {
   res.status(401).json({ error: 'Not authenticated' });
 }
 
+// Encryption helper
+
+const ENC_ALGO = 'aes-128-cbc';
+const ENC_KEY = crypto.createHash('md5').update(process.env.ENC_SECRET || 'default_secret').digest();
+const ENC_IV = Buffer.from(process.env.ENC_IV || '00000000000000000000000000000000', 'hex');
+
+function encrypt(text) {
+  if (!text) return '';
+  const cipher = crypto.createCipheriv(ENC_ALGO, ENC_KEY, ENC_IV);
+  let enc = cipher.update(text, 'utf8', 'hex');
+  enc += cipher.final('hex');
+  return enc;
+}
+
+function decrypt(encText) {
+  if (!encText) return '';
+  const decipher = crypto.createDecipheriv(ENC_ALGO, ENC_KEY, ENC_IV);
+  let dec = decipher.update(encText, 'hex', 'utf8');
+  dec += decipher.final('utf8');
+  return dec;
+}
+
+
 app.get('/', (req, res) => {
   res.send('Hello! Your HTTPS server with Helmet is running securely.');
 });
@@ -221,6 +249,54 @@ app.post('/auth/refresh', csrfProtection, async (req, res) => {
   }
 });
 
+app.post('/profile', csrfProtection, requireAuth, async (req, res) => {
+  try {
+    const { name, email, bio } = req.body;
+
+    if (!name || !email) {
+      return res.status(400).json({ error: 'name and email are required' });
+    }
+
+    const nameTrimmed = String(name).trim();
+    if (!/^[A-Za-z ]{3,50}$/.test(nameTrimmed)) {
+      return res.status(400).json({ error: 'invalid name' });
+    }
+
+    const emailTrimmed = String(email).trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrimmed)) {
+      return res.status(400).json({ error: 'invalid email' });
+    }
+
+    const rawBio = bio ? String(bio) : '';
+    const bioTrimmed = rawBio.trim();
+    if (bioTrimmed.length > 500) {
+      return res.status(400).json({ error: 'bio too long' });
+    }
+
+    const bioNoTags = bioTrimmed.replace(/<[^>]*>/g, '');
+    if (!/^[A-Za-z0-9 .,!?'"()\-\r\n]*$/.test(bioNoTags) && bioNoTags.length > 0) {
+      return res.status(400).json({ error: 'invalid bio' });
+    }
+
+    const encryptedEmail = encrypt(emailTrimmed);
+    const encryptedBio = encrypt(bioNoTags);
+
+    const updated = await User.findByIdAndUpdate(
+      req.user.id,
+      { name: nameTrimmed, email: encryptedEmail, bio: encryptedBio },
+      { new: true }
+    );
+
+    if (!updated) return res.status(404).json({ error: 'user not found' });
+
+    res.json({ message: 'profile updated' });
+  } catch {
+    res.status(500).json({ error: 'update failed' });
+  }
+});
+
+
+
 app.get('/auth/google', passport.authenticate('google', { scope: ['profile'] }));
 app.get('/auth/google/callback', passport.authenticate('google', { failureRedirect: '/auth/fail' }), (req, res) => {
   res.redirect('/auth/success');
@@ -231,9 +307,29 @@ app.get('/auth/success', (req, res) => {
 });
 app.get('/auth/fail', (req, res) => res.status(401).json({ error: 'Google auth failed' }));
 
-app.get('/me', requireAuth, (req, res) => {
-  res.json({ id: req.user.id, username: req.user.username, role: req.user.role, name: req.user.name });
+app.get('/me', requireAuth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ error: 'user not found' });
+    let email = '';
+    let bio = '';
+    try {
+      email = user.email ? decrypt(user.email) : '';
+      bio = user.bio ? decrypt(user.bio) : '';
+    } catch (e) {}
+    res.json({
+      id: user.id,
+      username: user.username,
+      role: user.role,
+      name: user.name,
+      email,
+      bio
+    });
+  } catch {
+    res.status(500).json({ error: 'Error fetching profile' });
+  }
 });
+
 
 app.get('/admin', requireRole(['admin']), (req, res) => {
   res.json({ area: 'admin', user: { id: req.user.id, username: req.user.username, role: req.user.role } });
@@ -244,10 +340,7 @@ app.get('/profile', requireAuth, (req, res) => {
 });
 
 app.get('/dashboard', requireAuth, (req, res) => {
-  const role = req.user.role || 'guest';
-  if (role === 'admin') return res.json({ area: 'dashboard', features: ['manage_users','manage_posts'] });
-  if (role === 'user') return res.json({ area: 'dashboard', features: ['create_posts','edit_own_posts','view_public'] });
-  return res.json({ area: 'dashboard', features: ['view_public'] });
+  res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
 });
 
 app.get('/posts', async (req, res) => {

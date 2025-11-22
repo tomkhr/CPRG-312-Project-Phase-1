@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>User Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 800px; margin: 40px auto; padding: 0 16px; }
+    h1 { margin-bottom: 8px; }
+    #user-details { margin-bottom: 24px; }
+    #profile-placeholder { margin: 24px 0; padding: 16px; border: 1px solid #ccc; border-radius: 4px; }
+    label { display: block; margin-top: 8px; }
+    input, textarea { width: 100%; padding: 6px; margin-top: 4px; box-sizing: border-box; }
+    button { padding: 8px 16px; font-size: 14px; cursor: pointer; margin-top: 12px; }
+    #message { margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <h1 id="welcome-text">Welcome</h1>
+
+  <div id="user-details">
+    <p id="user-name"></p>
+    <p id="user-email"></p>
+  </div>
+
+  <div id="profile-placeholder">
+    <h2>Update profile</h2>
+    <form id="profile-form">
+      <label for="name">Name</label>
+      <input id="name" name="name" type="text" required>
+
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" required>
+
+      <label for="bio">Bio</label>
+      <textarea id="bio" name="bio" rows="4" maxlength="500"></textarea>
+
+      <button type="submit">Save profile</button>
+    </form>
+    <div id="message"></div>
+  </div>
+
+  <button id="logout-btn">Logout</button>
+
+  <script src="/dashboard.js"></script>
+
+</body>
+</html>

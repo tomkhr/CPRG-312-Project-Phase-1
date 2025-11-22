@@ -1,0 +1,24 @@
+# CPRG-312 Developer Portfolio Project: Phase 2 by Tom Khrustalev (000962008)
+
+------------------------
+
+Phase 2 Reflection Checkpoints:
+
+Part A:
+
+For my authentication method, I chose to use both local authentication with usernames and passwords and Google OAuth SSO. I went with this because it’s a good mix of security and convenience. The local login helped me better understand how password hashing and user sessions work, while Google login makes it easier for users who don’t want to make a new account. I used Argon2 for hashing as it is both very secure and is easy to use in Node.js. I successfully tested the work done in Part A using Postman by running different POST and GET requests to signup and log in a user and to confirm session, as well as reseting a password. Also, tested Google SSO on the browser successfully.
+
+Part B:
+
+In this part, first I restructured the access control and user roles to: guest, user, and admin. I made it so that guests can only view public posts and don’t have access to any protected routes. Users can log in, view their profile, create and manage their own posts via the dashboard features. Admins have full access to everything, including the admin route, ability to manage users, and the ability to manage any post. I structured it this way because this a good imitation of 3 distinct levels of role-based access that replicate the minimum access control structure and dynamic on most web applications that use roles and is a good balance of security and UX for users of different levels. I then tested to ensure that the access control worked properly for each user level.
+
+Part C:
+
+I used JWTs stored in HttpOnly cookies since it’s a more secure method against attacks. I set a short access-token expiry (15 minutes) and a longer refresh token (7 days) so users stay logged in without re-entering passwords. The refresh issues a new access token when needed to keep a smoother user experience. The main trade-off is convenience vs. security: short expiries improve safety but can interrupt users. In the case of my app I believe 7 days to be reasonable as the web app would not house any highly sensitive data, so giving users a 7 day uninterrupted session is a way to lean more towards a better UX. I kept running into a “login failed” message during signup—even though the user was created—because variables in .env for didn’t updated. After restarting the server everything worked correctly.
+
+Part D:
+
+In this part, I focused on securing user sessions against common risks like session hijacking, SCRF attacks, and brute logins. I added secure cookies using HttpOnly, Secure, and SameSite=Lax to keep tokens protected. I implemented CSRF protection with a token system so requests can only come from trusted sources, and limited the attempt rate 5 tries to stop repeated failed login attempts. These changes help keep sessions safe while still letting users stay logged in easily. The only challenges I ran into were getting more technical with using Postman and learning where to find the Set-Cookie line in the Response Headers in Postman Console, because I could not find them in the Postman cookie jar, unless i was looking in the wrong place. 
+
+Part E:
+I tested the authentication system using Postman by simulating real user actions like signup, login, logout, token refresh, and access to protected routes. I do not have a front for now so using Postman was the optimal way to test the system while using this as an opportunity to learn Postman better as a tool in the process. I also tested scenarios where I have missing CSRF tokens, expired tokens, and multiple failed login attempts to check rate limiting. I checked that cookies were secure and that access control worked correctly for different roles. One issue I noticed was that cookies didn’t appear at first due to HTTPS settings in Postman, which I fixed by disabling SSL verification. I took quite a bit of figuring out and learning to use Postman more in depth.

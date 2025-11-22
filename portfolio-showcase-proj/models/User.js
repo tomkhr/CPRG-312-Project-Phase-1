@@ -29,6 +29,12 @@ const user = new mongoose.Schema({
     type: String, 
     enum: ['local', 'google'], 
     default: 'local' 
+  },
+  email: {
+    type: String
+  },
+  bio: {
+    type: String
   }
 });
 
