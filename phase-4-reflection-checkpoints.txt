@@ -1,0 +1,21 @@
+# CPRG-312 Developer Portfolio Project: Phase 4 by Tom Khrustalev (000962008)
+
+------------------------
+
+Phase 4 Reflection Checkpoints:
+
+# Part A:
+
+    Using the STRIDE framework helped me break down the different types of threats in a way that was easier to understand. Instead of just listing problesm STRIDE let me categorize each threat based on what kind of security issue it could cause. This made it more clear where the risks could come from from and how they could affect my application. When I started rating the impact and likelihood, some threats were less severe because the app already had protections like input sanitizing, CSRF tokens, and encrypted fields. Other threats like token theft or role escalation appeared to be more serious when i realized what could happen if these attacks were successfull. Seeing the severity and likelihood together helped me decide which risks needed more attention. The framework definitely makes it easier to prioritize what to focus on. It gave me a better understanding of how different vulnerabilities fit into the overal security of an application.
+
+# Part B:
+
+    It is important to use both manual and automatd testing because they each catch different types of problems. Manual testing lets me try things like typing in SQL code or XSS scripts to see how the app reacts in real tine. Automated tools like npm audit and ZAP scan the app more deeply and find things I would never notice on my own. When I used ZAP for the first time it found several issues with things that looked totally normal to me in the browser, but ZAP showed that they could still weaken security. using npm audit also helped me see if my dependencies had any known security problems. Manual testing helped confirm that features like my input validation and output encoding were working correctly because I tried putting in fake SQL code and XSS scripts and saw that the app blocked them. Together both types of testing gave me a clearer and more complete picture of my app’s security than doing only one method.
+
+# Part C:
+
+    When fixing the vulnerabilities from the ZAP scan i was able to resolve some of the issues by adding no-cache headers to private routes and changing the middleware order so Helmet is applied correctly. These fixes helped remove some alerts, but a few CSP warnings stayed and i was not able to successfully remedy them. i tried tightening the rules but ZAP continued to flag them and this showed me that some vulnerabilities are harder to fix. I worked through the challenges by testing small changes and checking the response headers and restarting the server to confirm what was actually applied. in the future, more regular security scans stronger CSP rules and more header hardening would help continue improving the app’s security.
+
+Part D:
+
+    In my application the main ethical issues I identified were related to handling personal data safely and making sure my security testing did not cross any boundaries. Because the app stores information like names and emails i needed to ensure that nothig was exposed or misused during testing, and that all actions followed ethical guidelines. I kept all testing on my own local system with encrypted sensitive data and validated inputs to prevent unsafe behavior. I also considered privacy laws which say that personal data need to be collected for a clear purpose, stored securely and handled responsibly.

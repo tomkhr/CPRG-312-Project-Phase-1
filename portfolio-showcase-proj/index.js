@@ -18,16 +18,36 @@ const csrf = require('csurf');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
 const crypto = require('crypto');
-
-
 const app = express();
+
+app.use(bodyParser.json());
+app.use(cookieParser());
+app.use(cors({ origin: process.env.CORS_ORIGIN, credentials: true }));
+
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        scriptSrcAttr: ["'none'"],
+        styleSrc: ["'self'"],
+        imgSrc: ["'self'", "data:"],
+        connectSrc: ["'self'"],
+        formAction: ["'self'"],
+        frameAncestors: ["'none'"],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        upgradeInsecureRequests: []
+      }
+    },
+    crossOriginEmbedderPolicy: false
+  })
+);
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-app.use(bodyParser.json());
-app.use(cors({ origin: process.env.CORS_ORIGIN, credentials: true }));
-app.use(helmet());
-app.use(cookieParser());
 app.disable('x-powered-by');
 
 mongoose.connect(process.env.MONGO_URI).then(() => console.log('Connected to MongoDB')).catch((err) => console.error('MongoDB connection error:', err));
@@ -118,6 +138,13 @@ function requireRole(roles) {
   };
 }
 
+function noCache(req, res, next) {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  next();
+}
+
 app.use(attachUser);
 
 
@@ -174,7 +201,7 @@ app.get('/csrf', csrfProtection, (req, res) => {
   res.json({ csrfToken: req.csrfToken() });
 });
 
-app.post('/auth/reset', csrfProtection, async (req, res) => {
+app.post('/auth/reset', csrfProtection, noCache, async (req, res) => {
   try {
     const { username, newPassword } = req.body;
     if (!username || !newPassword) return res.status(400).json({ error: 'username and newPassword are required' });
@@ -188,7 +215,7 @@ app.post('/auth/reset', csrfProtection, async (req, res) => {
   }
 });
 
-app.post('/auth/signup', csrfProtection, async (req, res) => {
+app.post('/auth/signup', csrfProtection, noCache, async (req, res) => {
   try {
     const { username, password, name } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'username and password are required' });
@@ -207,7 +234,7 @@ app.post('/auth/signup', csrfProtection, async (req, res) => {
   }
 });
 
-app.post('/auth/login', loginLimiter, csrfProtection, async (req, res) => {
+app.post('/auth/login', loginLimiter, csrfProtection, noCache, async (req, res) => {
   try {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'username and password are required' });
@@ -226,13 +253,13 @@ app.post('/auth/login', loginLimiter, csrfProtection, async (req, res) => {
   }
 });
 
-app.post('/auth/logout', csrfProtection, (req, res) => {
+app.post('/auth/logout', csrfProtection, noCache, (req, res) => {
   res.clearCookie('access_token', { path: '/' });
   res.clearCookie('refresh_token', { path: '/' });
   res.json({ message: 'logged out' });
 });
 
-app.post('/auth/refresh', csrfProtection, async (req, res) => {
+app.post('/auth/refresh', csrfProtection, noCache, async (req, res) => {
   try {
     const rt = getCookie(req, 'refresh_token');
     if (!rt) return res.status(401).json({ error: 'no refresh token' });
@@ -249,7 +276,7 @@ app.post('/auth/refresh', csrfProtection, async (req, res) => {
   }
 });
 
-app.post('/profile', csrfProtection, requireAuth, async (req, res) => {
+app.post('/profile', csrfProtection, requireAuth, noCache, async (req, res) => {
   try {
     const { name, email, bio } = req.body;
 
@@ -307,7 +334,7 @@ app.get('/auth/success', (req, res) => {
 });
 app.get('/auth/fail', (req, res) => res.status(401).json({ error: 'Google auth failed' }));
 
-app.get('/me', requireAuth, async (req, res) => {
+app.get('/me', requireAuth, noCache, async (req, res) => {
   try {
     const user = await User.findById(req.user.id);
     if (!user) return res.status(404).json({ error: 'user not found' });
@@ -339,7 +366,7 @@ app.get('/profile', requireAuth, (req, res) => {
   res.json({ area: 'profile', user: { id: req.user.id, username: req.user.username, role: req.user.role, name: req.user.name } });
 });
 
-app.get('/dashboard', requireAuth, (req, res) => {
+app.get('/dashboard', requireAuth, noCache, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
 });
 
